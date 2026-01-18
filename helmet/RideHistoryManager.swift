@@ -15,8 +15,28 @@ struct Ride: Identifiable, Codable {
     let altitudeCovered: Double
     let smoothnessScore: Double
     let routeCoordinates: [CLLocationCoordinate2D]
+    let averageSpeed: Double
+    let topSpeed: Double
+    let rideScore: Double
+    let summary: String?
+    let tips: [String]?
     
-    init(id: UUID = UUID(), title: String, date: Date, distanceKilometers: Double, caloriesBurnt: Int, timeTaken: TimeInterval, altitudeCovered: Double, smoothnessScore: Double, routeCoordinates: [CLLocationCoordinate2D] = []) {
+    init(
+        id: UUID = UUID(),
+        title: String,
+        date: Date,
+        distanceKilometers: Double,
+        caloriesBurnt: Int,
+        timeTaken: TimeInterval,
+        altitudeCovered: Double,
+        smoothnessScore: Double,
+        routeCoordinates: [CLLocationCoordinate2D] = [],
+        averageSpeed: Double = 0.0,
+        topSpeed: Double = 0.0,
+        rideScore: Double = 0.0,
+        summary: String? = nil,
+        tips: [String]? = nil
+    ) {
         self.id = id
         self.title = title
         self.date = date
@@ -26,11 +46,16 @@ struct Ride: Identifiable, Codable {
         self.altitudeCovered = altitudeCovered
         self.smoothnessScore = smoothnessScore
         self.routeCoordinates = routeCoordinates
+        self.averageSpeed = averageSpeed
+        self.topSpeed = topSpeed
+        self.rideScore = rideScore
+        self.summary = summary
+        self.tips = tips
     }
     
     enum CodingKeys: String, CodingKey {
         case id, title, date, distanceKilometers, caloriesBurnt, timeTaken, altitudeCovered, smoothnessScore
-        case routeLatitudes, routeLongitudes
+        case routeLatitudes, routeLongitudes, averageSpeed, topSpeed, rideScore, summary, tips
     }
     
     init(from decoder: Decoder) throws {
@@ -43,6 +68,11 @@ struct Ride: Identifiable, Codable {
         timeTaken = try container.decode(TimeInterval.self, forKey: .timeTaken)
         altitudeCovered = try container.decode(Double.self, forKey: .altitudeCovered)
         smoothnessScore = try container.decode(Double.self, forKey: .smoothnessScore)
+        averageSpeed = try container.decodeIfPresent(Double.self, forKey: .averageSpeed) ?? 0.0
+        topSpeed = try container.decodeIfPresent(Double.self, forKey: .topSpeed) ?? 0.0
+        rideScore = try container.decodeIfPresent(Double.self, forKey: .rideScore) ?? smoothnessScore
+        summary = try container.decodeIfPresent(String.self, forKey: .summary)
+        tips = try container.decodeIfPresent([String].self, forKey: .tips)
         
         let lats = try container.decode([Double].self, forKey: .routeLatitudes)
         let lons = try container.decode([Double].self, forKey: .routeLongitudes)
@@ -59,6 +89,11 @@ struct Ride: Identifiable, Codable {
         try container.encode(timeTaken, forKey: .timeTaken)
         try container.encode(altitudeCovered, forKey: .altitudeCovered)
         try container.encode(smoothnessScore, forKey: .smoothnessScore)
+        try container.encode(averageSpeed, forKey: .averageSpeed)
+        try container.encode(topSpeed, forKey: .topSpeed)
+        try container.encode(rideScore, forKey: .rideScore)
+        try container.encodeIfPresent(summary, forKey: .summary)
+        try container.encodeIfPresent(tips, forKey: .tips)
         try container.encode(routeCoordinates.map { $0.latitude }, forKey: .routeLatitudes)
         try container.encode(routeCoordinates.map { $0.longitude }, forKey: .routeLongitudes)
     }
@@ -138,9 +173,16 @@ class RideHistoryManager: ObservableObject {
         saveRides()
     }
     
-    private func saveRides() {
+    func saveRides() {
         if let encoded = try? JSONEncoder().encode(rides) {
             UserDefaults.standard.set(encoded, forKey: ridesKey)
+        }
+    }
+    
+    func updateRide(_ ride: Ride) {
+        if let index = rides.firstIndex(where: { $0.id == ride.id }) {
+            rides[index] = ride
+            saveRides()
         }
     }
 }

@@ -138,7 +138,9 @@ struct RideDetailView: View {
                         StatItem(icon: "flame.fill", label: "Calories", value: "\(ride.caloriesBurnt) kcal", color: .orange)
                         StatItem(icon: "clock.fill", label: "Time", value: formatTime(ride.timeTaken), color: .purple)
                         StatItem(icon: "mountain.2.fill", label: "Altitude", value: "\(String(format: "%.0f", ride.altitudeCovered)) m", color: .green)
-                        StatItem(icon: "star.fill", label: "Smoothness", value: "\(String(format: "%.1f", ride.smoothnessScore))/10", color: .yellow)
+                        StatItem(icon: "speedometer", label: "Avg Speed", value: "\(String(format: "%.1f", ride.averageSpeed)) km/h", color: .blue)
+                        StatItem(icon: "gauge.high", label: "Top Speed", value: "\(String(format: "%.1f", ride.topSpeed)) km/h", color: .red)
+                        StatItem(icon: "star.fill", label: "Ride Score", value: "\(String(format: "%.1f", ride.rideScore))/10", color: .yellow)
                     }
                     
                     // Map
@@ -165,21 +167,67 @@ struct RideDetailView: View {
                         }
                     }
                     
-                    // Ride Analysis Summary (Placeholder)
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Ride Analysis")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundColor(.primary)
-                        
-                        Text("Ride analysis summary will be implemented here.")
-                            .font(.system(size: 15))
-                            .foregroundColor(.secondary)
-                            .italic()
+                    // Ride Analysis Summary
+                    if let summary = ride.summary, !summary.isEmpty {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Ride Summary")
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundColor(.primary)
+                            
+                            Text(summary)
+                                .font(.system(size: 15))
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(.secondarySystemGroupedBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
-                    .padding()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(.secondarySystemGroupedBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    
+                    // Tips Section
+                    if let tips = ride.tips, !tips.isEmpty {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Tips for Improvement")
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundColor(.primary)
+                            
+                            ForEach(Array(tips.enumerated()), id: \.offset) { index, tip in
+                                HStack(alignment: .top, spacing: 8) {
+                                    Image(systemName: "lightbulb.fill")
+                                        .foregroundColor(.yellow)
+                                        .font(.system(size: 14))
+                                    
+                                    Text(tip)
+                                        .font(.system(size: 15))
+                                        .foregroundColor(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                        .padding()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(.secondarySystemGroupedBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                    
+                    // Show placeholder if no analysis yet
+                    if ride.summary == nil && ride.tips == nil {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Ride Analysis")
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundColor(.primary)
+                            
+                            Text("Analysis is being generated...")
+                                .font(.system(size: 15))
+                                .foregroundColor(.secondary)
+                                .italic()
+                        }
+                        .padding()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(.secondarySystemGroupedBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
                 }
                 .padding()
             }

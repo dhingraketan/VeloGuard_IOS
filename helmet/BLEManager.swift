@@ -117,6 +117,7 @@ final class BLEManager: NSObject, ObservableObject {
     private var rxChar: CBCharacteristic?
     private var alertsManager: AlertsManager?
     private var crashWorkflowManager: CrashWorkflowManager?
+    private var rideDataTracker: RideDataTracker?
     private var wasInGuardModeOnDisconnect = false
     private var lastGuardLocation: AlertLocation?
 
@@ -146,6 +147,10 @@ final class BLEManager: NSObject, ObservableObject {
     
     func setCrashWorkflowManager(_ manager: CrashWorkflowManager) {
         self.crashWorkflowManager = manager
+    }
+    
+    func setRideDataTracker(_ tracker: RideDataTracker) {
+        self.rideDataTracker = tracker
     }
     
     func setCurrentMode(_ mode: HelmetMode) {
@@ -210,7 +215,7 @@ final class BLEManager: NSObject, ObservableObject {
         guard let p = peripheral else { return }
         central.cancelPeripheralConnection(p)
     }
-    
+
     func send(_ text: String) {
         guard let p = peripheral, let rx = rxChar, isConnected else {
             connectionStatus = .error("Not connected")
@@ -732,6 +737,42 @@ extension BLEManager: CBPeripheralDelegate {
             print("🚨 Crash signal received in Ride mode")
             crashWorkflowManager?.handleCrashDetected()
         }
+        
+        // Check for pothole detection
+        let potholeKeywords = ["POTHOLE", "POT HOLE", "BUMP", "ROUGH"]
+        let containsPothole = potholeKeywords.contains { keyword in
+            upperMessage.contains(keyword)
+        }
+        
+        if containsPothole {
+            print("🕳️ Pothole detected in Ride mode: \(message)")
+            // Extract severity if present (e.g., "POTHOLE:MEDIUM" or "POTHOLE 5")
+            let severity = extractSeverity(from: message)
+            rideDataTracker?.addPotholeEvent(severity: severity)
+        }
+    }
+    
+    private func extractSeverity(from message: String) -> String? {
+        // Try to extract severity from message formats like:
+        // "POTHOLE:MEDIUM", "POTHOLE 5", "POTHOLE HIGH", etc.
+        let upperMessage = message.uppercased()
+        
+        if let colonRange = upperMessage.range(of: ":") {
+            let afterColon = String(upperMessage[colonRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !afterColon.isEmpty {
+                return afterColon.components(separatedBy: .whitespaces).first
+            }
+        }
+        
+        // Try to find numbers or severity words
+        let severityWords = ["LOW", "MEDIUM", "HIGH", "SEVERE", "MINOR", "MAJOR"]
+        for word in severityWords {
+            if upperMessage.contains(word) {
+                return word
+            }
+        }
+        
+        return nil
     }
     
     func peripheral(_ peripheral: CBPeripheral,

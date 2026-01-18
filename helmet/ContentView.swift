@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import CoreLocation
 
 struct ContentView: View {
     @ObservedObject var alertsManager: AlertsManager
@@ -8,7 +9,9 @@ struct ContentView: View {
     @StateObject private var bleManager = BLEManager()
     @StateObject private var statsManager = StatsManager()
     @StateObject private var crashWorkflowManager = CrashWorkflowManager()
+    @StateObject private var rideDataTracker = RideDataTracker()
     @State private var selectedMode: HelmetMode = .off
+    @State private var previousMode: HelmetMode = .off
 
     var body: some View {
         NavigationStack {
@@ -60,11 +63,13 @@ struct ContentView: View {
                 // Connect managers
                 bleManager.setAlertsManager(alertsManager)
                 bleManager.setCrashWorkflowManager(crashWorkflowManager)
+                bleManager.setRideDataTracker(rideDataTracker)
                 crashWorkflowManager.setAlertsManager(alertsManager)
                 crashWorkflowManager.setUserSettings(userSettings)
                 crashWorkflowManager.setRideHistoryManager(rideHistoryManager)
                 // Set initial mode
                 bleManager.setCurrentMode(selectedMode)
+                previousMode = selectedMode
             }
             .onChange(of: crashWorkflowManager.isCrashDetected) { oldValue, newValue in
                 // Show alert when crash is detected and app comes to foreground
@@ -78,8 +83,167 @@ struct ContentView: View {
             .onChange(of: selectedMode) { oldMode, newMode in
                 // Track mode changes for disconnection detection
                 bleManager.setCurrentMode(newMode)
+                
+                // Handle ride tracking
+                if newMode == .ride && oldMode != .ride {
+                    // Starting ride mode - start tracking
+                    print("🚴 Ride mode started - beginning GPS tracking")
+                    rideDataTracker.startTracking()
+                } else if oldMode == .ride && newMode != .ride {
+                    // Ending ride mode - stop tracking and save ride
+                    print("🛑 Ride mode ended - stopping tracking and saving ride")
+                    rideDataTracker.stopTracking()
+                    saveRideData()
+                }
+                
+                previousMode = newMode
             }
         }
+    }
+    
+    // MARK: - Helper Functions
+    private func saveRideData() {
+        let (gpsPoints, potholeEvents, startTime) = rideDataTracker.getRideData()
+        
+        guard !gpsPoints.isEmpty else {
+            print("⚠️ No GPS data collected, skipping ride save")
+            return
+        }
+        
+        // Calculate basic stats
+        let distance = calculateDistance(from: gpsPoints)
+        let altitude = calculateAltitude(from: gpsPoints)
+        let speeds = calculateSpeeds(from: gpsPoints)
+        let avgSpeed = speeds.isEmpty ? 0.0 : speeds.reduce(0, +) / Double(speeds.count)
+        let topSpeed = speeds.max() ?? 0.0
+        let duration = startTime != nil ? Date().timeIntervalSince(startTime!) : 0.0
+        let smoothnessScore = calculateSmoothnessScore(potholeCount: potholeEvents.count, distance: distance)
+        
+        // Estimate calories (simplified formula: ~30 calories per km)
+        let calories = Int(distance * 30)
+        
+        // Create route coordinates
+        let routeCoordinates = gpsPoints.map { $0.coordinate }
+        
+        // Create ride with temporary title (will be updated by Gemini)
+        let ride = Ride(
+            title: "Bike Ride",
+            date: startTime ?? Date(),
+            distanceKilometers: distance,
+            caloriesBurnt: calories,
+            timeTaken: duration,
+            altitudeCovered: altitude,
+            smoothnessScore: smoothnessScore,
+            routeCoordinates: routeCoordinates,
+            averageSpeed: avgSpeed,
+            topSpeed: topSpeed,
+            rideScore: smoothnessScore
+        )
+        
+        // Save ride
+        rideHistoryManager.addRide(ride)
+        
+        // Call Gemini API asynchronously to update ride analysis
+        DispatchQueue.global(qos: .userInitiated).async {
+            let geminiService = GeminiService(apiKey: "AIzaSyB4Cc38QROPIOtViDo5WsplpC8hISTIM3Y")
+            geminiService.analyzeRide(
+                gpsPoints: gpsPoints,
+                potholeEvents: potholeEvents,
+                startTime: startTime
+            ) { result in
+                DispatchQueue.main.async {
+                    switch result {
+                    case .success(let analysis):
+                        print("✅ Gemini analysis received")
+                        // Update the ride with Gemini analysis
+                        self.updateRideWithAnalysis(rideId: ride.id, analysis: analysis)
+                    case .failure(let error):
+                        print("❌ Gemini analysis failed: \(error.localizedDescription)")
+                    }
+                }
+            }
+        }
+    }
+    
+    private func updateRideWithAnalysis(rideId: UUID, analysis: RideAnalysis) {
+        guard let index = rideHistoryManager.rides.firstIndex(where: { $0.id == rideId }) else {
+            print("⚠️ Ride not found for analysis update")
+            return
+        }
+        
+        let ride = rideHistoryManager.rides[index]
+        let updatedRide = Ride(
+            id: ride.id,
+            title: analysis.rideName,
+            date: ride.date,
+            distanceKilometers: analysis.distanceKilometers,
+            caloriesBurnt: ride.caloriesBurnt,
+            timeTaken: ride.timeTaken,
+            altitudeCovered: analysis.altitudeCovered,
+            smoothnessScore: ride.smoothnessScore,
+            routeCoordinates: ride.routeCoordinates,
+            averageSpeed: analysis.averageSpeed,
+            topSpeed: analysis.topSpeed,
+            rideScore: analysis.rideScore,
+            summary: analysis.summary,
+            tips: analysis.tips
+        )
+        
+        rideHistoryManager.updateRide(updatedRide)
+    }
+    
+    private func calculateDistance(from points: [GPSPoint]) -> Double {
+        guard points.count >= 2 else { return 0.0 }
+        
+        var totalDistance: Double = 0.0
+        for i in 1..<points.count {
+            let prev = CLLocation(latitude: points[i-1].latitude, longitude: points[i-1].longitude)
+            let curr = CLLocation(latitude: points[i].latitude, longitude: points[i].longitude)
+            totalDistance += prev.distance(from: curr)
+        }
+        
+        return totalDistance / 1000.0 // Convert to kilometers
+    }
+    
+    private func calculateAltitude(from points: [GPSPoint]) -> Double {
+        guard !points.isEmpty else { return 0.0 }
+        
+        let altitudes = points.compactMap { $0.altitude }
+        guard !altitudes.isEmpty else { return 0.0 }
+        
+        let minAlt = altitudes.min() ?? 0.0
+        let maxAlt = altitudes.max() ?? 0.0
+        
+        return max(0, maxAlt - minAlt)
+    }
+    
+    private func calculateSpeeds(from points: [GPSPoint]) -> [Double] {
+        guard points.count >= 2 else { return [] }
+        
+        var speeds: [Double] = []
+        for i in 1..<points.count {
+            let prev = CLLocation(latitude: points[i-1].latitude, longitude: points[i-1].longitude)
+            let curr = CLLocation(latitude: points[i].latitude, longitude: points[i].longitude)
+            
+            let distance = prev.distance(from: curr) // meters
+            let timeInterval = points[i].timestamp.timeIntervalSince(points[i-1].timestamp) // seconds
+            
+            if timeInterval > 0 {
+                let speed = (distance / timeInterval) * 3.6 // Convert to km/h
+                speeds.append(speed)
+            }
+        }
+        
+        return speeds
+    }
+    
+    private func calculateSmoothnessScore(potholeCount: Int, distance: Double) -> Double {
+        guard distance > 0 else { return 10.0 }
+        
+        let potholesPerKm = Double(potholeCount) / distance
+        let score = max(0.0, min(10.0, 10.0 - (potholesPerKm * 2.0)))
+        
+        return Double(round(score * 10) / 10) // Round to 1 decimal place
     }
 }
 
@@ -203,7 +367,7 @@ struct ConnectionStatusCard: View {
             return "circle"
         }
     }
-    
+
     var body: some View {
         VStack(spacing: 16) {
             HStack(spacing: 16) {
@@ -744,7 +908,7 @@ struct GuardModeStatusCard: View {
                         Text("Waiting for GPS data...")
                             .font(.system(size: 15))
                             .foregroundColor(.secondary)
-                        Spacer()
+            Spacer()
                     }
                 }
             }
